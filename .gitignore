@@ -1,0 +1,14 @@
+.venv/
+venv/
+
+pptgen/venv/
+pptgen/.env
+
+__pycache__/
+*.py[cod]
+
+pptgen/outputs/
+pptgen/uploads/
+
+.DS_Store
+Thumbs.db
