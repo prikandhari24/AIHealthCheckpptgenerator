@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageChops, ImageOps
 
 from src.config import UPLOAD_DIR
 
@@ -19,6 +19,24 @@ def save_uploaded_file(uploaded_file, output_path: Path) -> Path:
     return output_path
 
 
+def _trim_outer_whitespace(image: Image.Image, threshold: int = 12) -> Image.Image:
+    if image.mode != "RGBA":
+        image = image.convert("RGBA")
+
+    alpha_bbox = image.getbbox()
+    if alpha_bbox:
+        image = image.crop(alpha_bbox)
+
+    rgb_image = image.convert("RGB")
+    background = Image.new("RGB", rgb_image.size, rgb_image.getpixel((0, 0)))
+    difference = ImageChops.difference(rgb_image, background).convert("L")
+    trimmed_bbox = difference.point(lambda value: 255 if value > threshold else 0).getbbox()
+
+    if trimmed_bbox:
+        return image.crop(trimmed_bbox)
+    return image
+
+
 def resize_logo(
     input_path: Path,
     output_path: Path,
@@ -31,9 +49,7 @@ def resize_logo(
         gray = ImageOps.grayscale(image.convert("RGB"))
         image = Image.merge("RGBA", (gray, gray, gray, image.getchannel("A")))
 
-    bbox = image.getbbox()
-    if bbox:
-        image = image.crop(bbox)
+    image = _trim_outer_whitespace(image)
 
     image.thumbnail(size, Image.LANCZOS)
     image.save(output_path)

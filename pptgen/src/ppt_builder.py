@@ -5,17 +5,9 @@ import re
 
 from PIL import Image
 from pptx import Presentation
-from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
-from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 
 from src.config import (
-    CALLOUT_BORDER_COLOR,
-    CALLOUT_FILL_COLOR,
-    CALLOUT_FONT_SIZE,
-    CALLOUT_HEIGHT_FACTOR,
-    CALLOUT_RIGHT_PADDING,
-    CALLOUT_TEXT_COLOR,
-    CALLOUT_WIDTH,
     HEADER_CLIENT_OFFSET,
     HEADER_PEER_OFFSET,
     LEGEND_FONT_SIZE,
@@ -41,7 +33,6 @@ LEVEL_RANK = {
     "at_par": 1,
     "ahead": 2,
 }
-MAX_CALLOUTS_PER_SLIDE = 3
 MAX_CALLOUT_TEXT_LENGTH = 70
 
 
@@ -51,7 +42,7 @@ STATUS_TO_COLUMN = {
     "ahead": 5,
 }
 
-CLIENT_NAME_PLACEHOLDERS = ("Legalitas", "Legálitas")
+CLIENT_NAME_PLACEHOLDERS = ("Legalitas", "Leg\u00c3\u00a1litas")
 
 
 def _find_text_shape(slide, target_text: str):
@@ -149,7 +140,35 @@ def _single_row_layout_height(width: int, height: int, logo_paths: list[str]) ->
     return max(1, min(max_height, int(width_budget / max(aspect_sum, 0.01))))
 
 
-def _compute_chart_logo_height(presentation, parsed_data, company_order: list[str], logo_paths_by_company: dict[str, str]) -> int:
+def _logos_for_status(
+    assessment,
+    status: str,
+    client_company: str,
+    company_order: list[str],
+    logo_paths_by_company: dict[str, str],
+) -> list[str]:
+    peer_logos = [
+        logo_paths_by_company[company]
+        for company in company_order
+        if company != client_company
+        and assessment.company_levels.get(company) == status
+        and company in logo_paths_by_company
+    ]
+    if (
+        assessment.company_levels.get(client_company) == status
+        and client_company in logo_paths_by_company
+    ):
+        peer_logos.append(logo_paths_by_company[client_company])
+    return peer_logos
+
+
+def _compute_chart_logo_height(
+    presentation,
+    parsed_data,
+    client_company: str,
+    company_order: list[str],
+    logo_paths_by_company: dict[str, str],
+) -> int:
     feasible_heights = []
 
     for slide_index in SCORE_SLIDE_INDEXES:
@@ -171,11 +190,13 @@ def _compute_chart_logo_height(presentation, parsed_data, company_order: list[st
                 continue
 
             for status, col_idx in STATUS_TO_COLUMN.items():
-                matching_logos = [
-                    logo_paths_by_company[company]
-                    for company in company_order
-                    if assessment.company_levels.get(company) == status and company in logo_paths_by_company
-                ]
+                matching_logos = _logos_for_status(
+                    assessment,
+                    status,
+                    client_company,
+                    company_order,
+                    logo_paths_by_company,
+                )
                 if not matching_logos:
                     continue
 
@@ -228,37 +249,7 @@ def _add_logo_strip(
 
 def _estimate_text_width(text: str) -> int:
     font_points = LEGEND_FONT_SIZE.pt
-    # Approximate average character width for compact sans-serif legend text.
     return int(len(text) * font_points * 7000) + int(LEGEND_TEXT_GAP)
-
-
-def _add_callout_box(slide, text: str, left: int, top: int, width: int, height: int):
-    shape = slide.shapes.add_shape(
-        MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE,
-        left,
-        top,
-        width,
-        height,
-    )
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = CALLOUT_FILL_COLOR
-    shape.line.color.rgb = CALLOUT_BORDER_COLOR
-
-    text_frame = shape.text_frame
-    text_frame.word_wrap = True
-    text_frame.margin_left = 0
-    text_frame.margin_right = 0
-    text_frame.margin_top = 0
-    text_frame.margin_bottom = 0
-    text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
-    text_frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-
-    paragraph = text_frame.paragraphs[0]
-    paragraph.alignment = PP_ALIGN.CENTER
-    run = paragraph.add_run()
-    run.text = text
-    run.font.size = CALLOUT_FONT_SIZE
-    run.font.color.rgb = CALLOUT_TEXT_COLOR
 
 
 def _add_legend_text(slide, text: str, left: int, top: int, width: int, height: int):
@@ -352,18 +343,13 @@ def _peer_advantage_count(assessment, client_company: str, peer_companies: list[
     )
 
 
-def _select_slide_callouts(table, parsed_data, client_company: str, peer_companies: list[str]) -> dict[int, str]:
-    candidates: list[tuple[int, int, str]] = []
+def list_callout_suggestions(parsed_data, client_company: str) -> list[dict[str, str | int]]:
+    peer_companies = [
+        company for company in parsed_data.companies if company != client_company
+    ]
+    suggestions: list[dict[str, str | int]] = []
 
-    for row_idx in range(1, len(table.rows)):
-        indicator = table.cell(row_idx, 1).text.strip()
-        if not indicator:
-            continue
-
-        assessment = parsed_data.get_indicator_assessment(indicator)
-        if assessment is None:
-            continue
-
+    for assessment in parsed_data.rows:
         better_peer_count = _peer_advantage_count(
             assessment,
             client_company,
@@ -380,29 +366,25 @@ def _select_slide_callouts(table, parsed_data, client_company: str, peer_compani
         if not summary_text:
             continue
 
-        candidates.append((row_idx, better_peer_count, summary_text))
+        client_level = assessment.company_levels.get(client_company, "")
+        suggestions.append(
+            {
+                "Dimension": assessment.dimension,
+                "Indicator": assessment.indicator,
+                "Client status": client_level.replace("_", " ").title(),
+                "Peers ahead of client": better_peer_count,
+                "Suggested callout": summary_text,
+            }
+        )
 
-    candidates.sort(key=lambda candidate: (-candidate[1], candidate[0]))
-    return {
-        row_idx: summary_text
-        for row_idx, _, summary_text in candidates[:MAX_CALLOUTS_PER_SLIDE]
-    }
-
-
-def _render_callout_for_row(slide, table_shape, row_idx: int, callout_text: str):
-    desc_left, desc_top, desc_width, desc_height = _cell_bounds(table_shape, row_idx, 2)
-    callout_width = min(int(CALLOUT_WIDTH), max(desc_width // 3, 1))
-    callout_height = max(1, int(desc_height * CALLOUT_HEIGHT_FACTOR))
-    callout_left = desc_left + desc_width - callout_width - int(CALLOUT_RIGHT_PADDING)
-    callout_top = desc_top + max((desc_height - callout_height) // 2, 0)
-    _add_callout_box(
-        slide,
-        callout_text,
-        callout_left,
-        callout_top,
-        callout_width,
-        callout_height,
+    suggestions.sort(
+        key=lambda item: (
+            -int(item["Peers ahead of client"]),
+            str(item["Dimension"]),
+            str(item["Indicator"]),
+        )
     )
+    return suggestions
 
 
 def _add_header_legends(
@@ -470,11 +452,9 @@ def _render_slide_scores(
     slide,
     parsed_data,
     client_company: str,
-    peer_companies: list[str],
     company_order: list[str],
     logo_paths_by_company: dict[str, str],
     chart_logo_height: int,
-    include_callouts: bool,
 ):
     table_shape = _find_table_shape(slide)
     if table_shape is None:
@@ -482,16 +462,6 @@ def _render_slide_scores(
 
     table = table_shape.table
     missing_indicators = []
-    slide_callouts = (
-        _select_slide_callouts(
-            table,
-            parsed_data,
-            client_company,
-            peer_companies,
-        )
-        if include_callouts
-        else {}
-    )
 
     for row_idx in range(1, len(table.rows)):
         indicator = table.cell(row_idx, 1).text.strip()
@@ -504,11 +474,13 @@ def _render_slide_scores(
             continue
 
         for status, col_idx in STATUS_TO_COLUMN.items():
-            matching_logos = [
-                logo_paths_by_company[company]
-                for company in company_order
-                if assessment.company_levels.get(company) == status and company in logo_paths_by_company
-            ]
+            matching_logos = _logos_for_status(
+                assessment,
+                status,
+                client_company,
+                company_order,
+                logo_paths_by_company,
+            )
             cell_left, cell_top, cell_width, cell_height = _cell_bounds(table_shape, row_idx, col_idx)
             _add_logo_strip(
                 slide,
@@ -518,14 +490,6 @@ def _render_slide_scores(
                 cell_width,
                 cell_height,
                 chart_logo_height,
-            )
-
-        if row_idx in slide_callouts:
-            _render_callout_for_row(
-                slide,
-                table_shape,
-                row_idx,
-                slide_callouts[row_idx],
             )
 
     if missing_indicators:
@@ -541,7 +505,6 @@ def build_ppt(
     title_logo_path: str,
     client_logo_path: str,
     peer_logo_paths: dict[str, str],
-    include_callouts: bool = True,
 ):
     if not TEMPLATE_PATH.exists():
         raise FileNotFoundError(f"Template not found: {TEMPLATE_PATH}")
@@ -561,6 +524,7 @@ def build_ppt(
     chart_logo_height = _compute_chart_logo_height(
         presentation,
         parsed_data,
+        client_company,
         ordered_companies,
         logo_paths_by_company,
     )
@@ -583,11 +547,9 @@ def build_ppt(
             slide,
             parsed_data,
             client_company,
-            peer_companies,
             ordered_companies,
             logo_paths_by_company,
             chart_logo_height,
-            include_callouts,
         )
 
     OUTPUT_DIR.mkdir(exist_ok=True)

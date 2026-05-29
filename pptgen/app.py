@@ -1,12 +1,13 @@
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 from src.config import OUTPUT_DIR, UPLOAD_DIR
 from src.env_loader import load_env_file
 from src.excel_parser import normalize_label, parse_excel
 from src.logo_processor import process_logos
-from src.ppt_builder import build_ppt
+from src.ppt_builder import build_ppt, list_callout_suggestions
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -79,7 +80,6 @@ if excel_file:
 
 client_company = None
 peer_logo_assignments: dict[str, object] = {}
-include_callouts = True
 
 if parsed_data:
     client_default = 0
@@ -129,11 +129,14 @@ if parsed_data:
                 "Missing peer logos for: " + ", ".join(missing_peer_companies)
             )
 
+    suggestions = list_callout_suggestions(parsed_data, client_company)
     st.divider()
-    include_callouts = st.checkbox(
-        "Include callouts",
-        value=True,
-    )
+    st.subheader("Suggested Callouts")
+    if suggestions:
+        st.caption("Potential callouts for indicators where peers are ahead of the client.")
+        st.dataframe(pd.DataFrame(suggestions), use_container_width=True)
+    else:
+        st.info("No suggested callouts found for the selected client company.")
 
 if st.button("Generate PPT"):
     if parsed_data is None:
@@ -166,7 +169,6 @@ if st.button("Generate PPT"):
                     title_logo_path,
                     client_logo_path,
                     peer_logo_paths,
-                    include_callouts=include_callouts,
                 )
 
                 with open(ppt_path, "rb") as file_handle:

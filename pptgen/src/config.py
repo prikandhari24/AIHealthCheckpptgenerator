@@ -1,6 +1,5 @@
 from pathlib import Path
 
-from pptx.dml.color import RGBColor
 from pptx.util import Inches, Pt
 
 
@@ -27,11 +26,3 @@ ROW_LOGO_MAX_HEIGHT_FACTOR = 0.84
 ROW_LOGO_HORIZONTAL_PADDING = Inches(0.015)
 ROW_LOGO_GAP = Inches(0.005)
 ROW_LOGO_VERTICAL_GAP = Inches(0.01)
-
-CALLOUT_WIDTH = Inches(1.58)
-CALLOUT_HEIGHT_FACTOR = 0.76
-CALLOUT_RIGHT_PADDING = Inches(0.06)
-CALLOUT_FONT_SIZE = Pt(7)
-CALLOUT_FILL_COLOR = RGBColor(255, 243, 224)
-CALLOUT_BORDER_COLOR = RGBColor(192, 0, 0)
-CALLOUT_TEXT_COLOR = RGBColor(192, 0, 0)
